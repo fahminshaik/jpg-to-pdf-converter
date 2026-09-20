@@ -1,21 +1,15 @@
-// server.js
-// Minimal backend: receives an uploaded JPG and emails it to the site owner.
-// PDF conversion itself happens client-side (see public/script.js) so the
-// user gets an instant download without waiting on the server.
-
 const express = require("express");
 const multer = require("multer");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const path = require("path");
 require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Store the upload in memory just long enough to email it — never written to disk.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB cap
+  limits: { fileSize: 15 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === "image/jpeg") {
       cb(null, true);
@@ -28,24 +22,14 @@ const upload = multer({
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
-let transporter = null;
-function getTransporter() {
-  if (transporter) return transporter;
-
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error(
-      "EMAIL_USER and EMAIL_PASS environment variables are not set."
-    );
+let resend = null;
+function getResend() {
+  if (resend) return resend;
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY environment variable is not set.");
   }
-
-  transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS, // Gmail App Password, not your regular password
-    },
-  });
-  return transporter;
+  resend = new Resend(process.env.RESEND_API_KEY);
+  return resend;
 }
 
 app.post("/api/upload", upload.single("photo"), async (req, res) => {
@@ -54,11 +38,13 @@ app.post("/api/upload", upload.single("photo"), async (req, res) => {
       return res.status(400).json({ error: "No file received." });
     }
 
-    const to = process.env.EMAIL_TO || process.env.EMAIL_USER;
-    const mailer = getTransporter();
+    const to = process.env.EMAIL_TO;
+    if (!to) throw new Error("EMAIL_TO environment variable is not set.");
 
-    await mailer.sendMail({
-      from: process.env.EMAIL_USER,
+    const client = getResend();
+
+    await client.emails.send({
+      from: "JPG to PDF <onboarding@resend.dev>",
       to,
       subject: "New JPG upload from converter site",
       text: `A visitor uploaded a photo through the JPG→PDF converter at ${new Date().toISOString()}.`,
@@ -66,7 +52,6 @@ app.post("/api/upload", upload.single("photo"), async (req, res) => {
         {
           filename: req.file.originalname || "upload.jpg",
           content: req.file.buffer,
-          contentType: "image/jpeg",
         },
       ],
     });
